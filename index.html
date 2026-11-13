@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>FuelWise — планировщик поездок</title>
+  <meta name="description" content="FuelWise помогает спланировать автомобильную поездку: рассчитать расход и стоимость топлива, проверить, хватит ли топлива в баке, найти заправки по маршруту и сравнить варианты поездки.">
+  <meta name="theme-color" content="#0c121a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="FuelWise">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="css/style.css">
+  <script>
+    // Тема применяется до отрисовки страницы, чтобы не было вспышки светлого фона.
+    try {
+      const savedTheme = JSON.parse(localStorage.getItem("fuelwise.v3.theme"));
+      if (savedTheme === "light" || savedTheme === "dark") {
+        document.documentElement.dataset.theme = savedTheme;
+      }
+    } catch {
+      // Повреждённое значение игнорируется: действует тема системы.
+    }
+  </script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-header__inner">
+      <img class="app-header__logo" src="icons/icon-192.png" alt="" width="44" height="44">
+      <div class="app-header__text">
+        <h1>FuelWise</h1>
+        <p>Маршрут, расход топлива и заправки в одном плане.</p>
+      </div>
+      <button class="button button--ghost app-header__theme" id="theme-toggle" type="button">Тёмная тема</button>
+    </div>
+  </header>
+
+  <div class="notice notice--info page-notice" id="offline-banner" role="status" hidden>
+    Нет интернет-соединения. Приложение работает с сохранёнными данными
+  </div>
+  <div class="notice notice--danger page-notice" id="app-error" role="alert" hidden></div>
+
+  <main class="layout">
+    <form class="layout__form" id="trip-form" novalidate>
+      <section class="card">
+        <h2>Маршрут</h2>
+
+        <div class="field">
+          <label for="start-point">Точка А — адрес или объект</label>
+          <div class="field__row field__row--locations">
+            <input id="start-point" type="search" maxlength="160" autocomplete="off" placeholder="Например, улица и номер дома" aria-describedby="start-point-error">
+            <button class="button button--ghost" id="search-start" type="button">Найти</button>
+            <button class="button button--ghost" id="pick-start" type="button" aria-pressed="false">На карте</button>
+          </div>
+          <div class="location-choices" id="start-point-choices" role="listbox" aria-label="Результаты поиска точки А"></div>
+          <p class="field__error" id="start-point-error" data-error-for="startPoint"></p>
+        </div>
+
+        <div class="field">
+          <label for="end-point">Точка Б — адрес или объект</label>
+          <div class="field__row field__row--locations">
+            <input id="end-point" type="search" maxlength="160" autocomplete="off" placeholder="Например, название места" aria-describedby="end-point-error">
+            <button class="button button--ghost" id="search-end" type="button">Найти</button>
+            <button class="button button--ghost" id="pick-end" type="button" aria-pressed="false">На карте</button>
+          </div>
+          <div class="location-choices" id="end-point-choices" role="listbox" aria-label="Результаты поиска точки Б"></div>
+          <p class="field__error" id="end-point-error" data-error-for="endPoint"></p>
+        </div>
+
+        <button class="button button--ghost button--wide" id="swap-points" type="button">Поменять точки местами</button>
+      </section>
+
+      <section class="card">
+        <h2>Автомобиль</h2>
+
+        <div class="field-grid">
+          <div class="field">
+            <label for="consumption">Расход топлива, л/100 км</label>
+            <input id="consumption" type="text" inputmode="decimal" autocomplete="off" aria-describedby="consumption-error">
+            <p class="field__error" id="consumption-error" data-error-for="consumption"></p>
+          </div>
+
+          <div class="field">
+            <label for="current-fuel">Топливо в баке сейчас, л</label>
+            <input id="current-fuel" type="text" inputmode="decimal" autocomplete="off" aria-describedby="current-fuel-error">
+            <p class="field__error" id="current-fuel-error" data-error-for="currentFuel"></p>
+          </div>
+
+          <div class="field">
+            <label for="tank-capacity">Объём бака, л</label>
+            <input id="tank-capacity" type="text" inputmode="decimal" autocomplete="off" aria-describedby="tank-capacity-error">
+            <p class="field__error" id="tank-capacity-error" data-error-for="tankCapacity"></p>
+          </div>
+
+          <div class="field">
+            <label for="fuel-type">Тип топлива</label>
+            <select id="fuel-type" aria-describedby="fuel-type-error"></select>
+            <p class="field__error" id="fuel-type-error" data-error-for="fuelType"></p>
+          </div>
+
+          <div class="field">
+            <label for="price-per-liter">Цена топлива, ₽/л (по желанию)</label>
+            <input id="price-per-liter" type="text" inputmode="decimal" autocomplete="off" aria-describedby="price-per-liter-error">
+            <p class="field__hint">Если цена не указана и свежих цен АЗС нет, стоимость не рассчитывается.</p>
+            <p class="field__error" id="price-per-liter-error" data-error-for="pricePerLiter"></p>
+          </div>
+        </div>
+
+        <button class="button button--ghost button--wide" id="save-vehicle" type="button">Сохранить параметры автомобиля</button>
+        <p class="field__hint" id="vehicle-status" role="status"></p>
+      </section>
+
+      <section class="card">
+        <h2 id="priority-title">Приоритет поездки</h2>
+        <div class="segmented" role="radiogroup" aria-labelledby="priority-title">
+          <label><input type="radio" name="priority" value="cheapest"><span>Дешевле</span></label>
+          <label><input type="radio" name="priority" value="fastest"><span>Быстрее</span></label>
+          <label><input type="radio" name="priority" value="balanced" checked><span>Сбалансированно</span></label>
+        </div>
+      </section>
+
+      <div class="form-actions">
+        <button class="button button--primary" id="calculate" type="submit" disabled>Рассчитать поездку</button>
+        <button class="button button--ghost" id="reset" type="button">Сбросить</button>
+      </div>
+    </form>
+
+    <div class="layout__content">
+      <section class="card card--map" aria-label="Карта маршрута">
+        <div class="map" id="map"></div>
+        <p class="map-status" id="map-status" role="status" hidden></p>
+      </section>
+
+      <div class="results" id="results" hidden>
+        <section class="card" aria-labelledby="summary-title">
+          <h2 id="summary-title">Результат</h2>
+          <div id="trip-summary"></div>
+        </section>
+
+        <section class="card" aria-labelledby="variants-title">
+          <h2 id="variants-title">Варианты поездки</h2>
+          <div class="variant-cards" id="variant-cards"></div>
+          <div class="table-scroll" tabindex="0" aria-label="Сравнение вариантов поездки">
+            <table class="comparison">
+              <thead>
+                <tr>
+                  <th scope="col">Вариант</th>
+                  <th scope="col">Расстояние</th>
+                  <th scope="col">Время в пути</th>
+                  <th scope="col">Нужно топлива</th>
+                  <th scope="col">Стоимость</th>
+                  <th scope="col">Заправки</th>
+                  <th scope="col">Время на заправки</th>
+                  <th scope="col">Остаток</th>
+                </tr>
+              </thead>
+              <tbody id="comparison-body"></tbody>
+            </table>
+          </div>
+          <div class="charts" id="charts"></div>
+        </section>
+
+        <section class="card" aria-labelledby="stations-title">
+          <h2 id="stations-title">Заправки по маршруту</h2>
+          <div id="stop-plan"></div>
+          <div class="station-cards" id="station-cards"></div>
+        </section>
+      </div>
+
+      <section class="card" aria-labelledby="warnings-title">
+        <h2 id="warnings-title">Предупреждения</h2>
+        <div class="notice-list" id="warnings" aria-live="polite"></div>
+        <div class="notice notice--info">Маршрут строится по дорожным данным. Если цена топлива не получена из доступных сведений АЗС, введите её вручную для расчёта стоимости.</div>
+      </section>
+
+      <section class="card live-map-card" aria-labelledby="moscow-map-title">
+        <div class="live-map-card__header">
+          <div>
+            <h2 id="moscow-map-title">Заправки Москвы</h2>
+            <p class="field__hint">Карта улиц основана на OpenStreetMap. Точки АЗС и цены загружаются из открытых источников, если они доступны.</p>
+          </div>
+          <button class="button button--ghost button--small" id="reload-moscow-stations" type="button">Обновить</button>
+        </div>
+        <div class="live-map-tools">
+          <label for="live-fuel-filter">Показать топливо</label>
+          <select id="live-fuel-filter" aria-label="Фильтр заправок по виду топлива">
+            <option value="all">Все виды</option>
+            <option value="ai92">АИ-92</option>
+            <option value="ai95">АИ-95</option>
+            <option value="ai98">АИ-98</option>
+            <option value="ai100">АИ-100</option>
+            <option value="dt">Дизель</option>
+          </select>
+          <span id="moscow-stations-count" class="live-map-count" role="status">Загружаем станции…</span>
+        </div>
+        <p class="field__hint live-map-filter-note" id="live-map-filter-note" hidden>Станции без сведений о выбранном виде топлива остаются на карте: их наличие не подтверждено ни как есть, ни как отсутствует.</p>
+        <div class="map live-map" id="moscow-map" aria-label="Интерактивная карта заправок Москвы"></div>
+        <p class="map-status" id="moscow-tile-status" role="status" aria-live="polite" hidden></p>
+        <p class="map-status" id="moscow-stations-status" role="status" aria-live="polite">Подключаем карту и загружаем станции…</p>
+        <div class="live-map-credits">
+          Карта: <a href="https://mierune.co.jp/" target="_blank" rel="noopener noreferrer">MIERUNE Inc.</a> · <a href="https://www.openmaptiles.org/" target="_blank" rel="noopener noreferrer">OpenMapTiles</a> · <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors</a>.
+          Поиск адресов: <a href="https://operations.osmfoundation.org/policies/nominatim/" target="_blank" rel="noopener noreferrer">Nominatim</a> · маршруты: <a href="https://project-osrm.org/" target="_blank" rel="noopener noreferrer">OSRM</a>. Публичные сервисы имеют ограничения по частоте и доступности.
+          Данные о ценах и наличии: <a href="https://gde-benzin.ru/" target="_blank" rel="noopener noreferrer">«Где бензин»</a> ·
+          <a href="https://www.youtube.com/@d_tylnyi" target="_blank" rel="noopener noreferrer">автор проекта — Дмитрий Тыльный</a>.
+        </div>
+        <div class="live-station-list" id="moscow-stations-list" aria-label="Список заправок на карте"></div>
+      </section>
+
+      <section class="card" aria-labelledby="history-title">
+        <div class="card__header">
+          <h2 id="history-title">История расчётов</h2>
+          <div class="card__actions">
+            <button class="button button--ghost button--small" id="export-history" type="button">Экспорт в CSV</button>
+            <button class="button button--ghost button--small" id="clear-history" type="button">Очистить</button>
+          </div>
+        </div>
+        <ul class="history-list" id="history-list"></ul>
+        <p class="field__hint" id="history-empty">Здесь появятся последние 10 расчётов.</p>
+      </section>
+
+    </div>
+  </main>
+
+  <script defer src="vendor/leaflet/leaflet.js"></script>
+  <script defer src="js/calculations.js"></script>
+  <script defer src="js/validation.js"></script>
+  <script defer src="js/storage.js"></script>
+  <script defer src="js/services/demoDataLoader.js"></script>
+  <script defer src="js/services/geocodingService.js"></script>
+  <script defer src="js/services/routingService.js"></script>
+  <script defer src="js/services/fuelStationsService.js"></script>
+  <script defer src="data/moscow-stations.snapshot.fallback.js"></script>
+  <script defer src="js/services/stationsApiConfig.js"></script>
+  <script defer src="js/services/liveFuelStationsService.live.js"></script>
+  <script defer src="js/optimizer.js"></script>
+  <script defer src="js/mapTiles.js"></script>
+  <script defer src="js/map.js"></script>
+  <script defer src="js/moscowStationsMap.live.js"></script>
+  <script defer src="js/ui.js"></script>
+  <script defer src="js/app.js"></script>
+</body>
+</html>
