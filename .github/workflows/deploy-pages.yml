@@ -1,0 +1,37 @@
+name: Publish FuelWise to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get project files
+        uses: actions/checkout@v6
+      - name: Prepare Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - name: Package static app
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: .
+      - name: Publish site
+        id: deployment
+        uses: actions/deploy-pages@v4
